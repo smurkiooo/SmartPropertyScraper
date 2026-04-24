@@ -3,11 +3,15 @@ name = "realty-scraper"
 version = "0.1.0"
 description = "Сбор структурированных данных, описаний и фото объявлений недвижимости с domclick.ru"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "beautifulsoup4>=4.14.3",
+    "boto3>=1.42.90",
+    "dvc-s3>=3.3.0",
     "httpx>=0.28.1",
     "pandas>=3.0.2",
+    "pandera[pandas]>=0.31.1",
+    "pyarrow>=23.0.1",
     "tenacity>=9.1.4",
     "tqdm>=4.67.3",
 ]
@@ -15,6 +19,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "dvc>=3.67.1",
+    # dvc-s3 устанавливается отдельно: `uv pip install "dvc[s3]"`
+    # (конфликтует с резолвером uv из-за aiobotocore/botocore)
 ]
 
 [build-system]

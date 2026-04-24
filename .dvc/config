@@ -1,4 +1,7 @@
 [core]
-    remote = localremote
+    remote = s3remote
 ['remote "localremote"']
     url = /Users/roman/dvc-storage-realty
+['remote "s3remote"']
+    url = s3://dvc-storage
+    endpointurl = http://localhost:9000

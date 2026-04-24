@@ -26,6 +26,8 @@ wheels/
 /data/images/
 *.csv
 *.jsonl
+*.parquet
+.env
 !data/.gitkeep
 
 # DVC internals

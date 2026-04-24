@@ -1,132 +1,222 @@
 # realty-scraper
 
 Проект: сбор структурированных данных, текстовых описаний и фотографий
-объявлений о недвижимости с российского портала **cian.ru**.
+объявлений о недвижимости с российского портала **cian.ru**, загрузка фото
+в локальный MinIO/S3, валидация Pandera-схемой и сохранение в parquet под
+контролем DVC.
 
 ## Источник данных
 
 [cian.ru](https://cian.ru) — крупнейший российский агрегатор объявлений
 о покупке и аренде недвижимости. Используется публичный JSON POST-эндпоинт
-`https://api.cian.ru/search-offers/v2/search-offers-desktop/`, который
-вызывает фронтенд сайта при обычном поиске.
+`https://api.cian.ru/search-offers/v2/search-offers-desktop/`.
 
 Для каждого объявления собираются три типа артефактов:
 
-| Тип артефакта      | Поля                                                                                                                                               |
-|--------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
-| Структурированные  | `price`, `price_per_m2`, `area_total/living/kitchen`, `rooms`, `floor`, `floors_total`, `latitude`, `longitude`, `year_built`, `house_material`, … |
-| Текстовое описание | `description` — свободный текст автора объявления                                                                                                  |
-| Изображения        | `image_urls` — список ссылок на фото интерьеров и планировок (через `;`)                                                                           |
+| Тип артефакта      | Поля                                                                          |
+|--------------------|-------------------------------------------------------------------------------|
+| Структурированные  | цена, площади, этажность, координаты, год постройки, материал стен и т.д.     |
+| Текстовое описание | `description` — свободный текст автора                                        |
+| Изображения        | фото интерьеров и планировок (после этапа 2 — S3 URI в MinIO)                 |
 
 Готовые CSV с Kaggle **не используются** — данные собираются скрэйпером.
+
+## Пайплайн
+
+```
+┌────────────┐     ┌────────────┐     ┌────────────────┐     ┌─────────────┐
+│ cian.ru    │ ──▶ │ listings   │ ──▶ │ listings_s3    │ ──▶ │ listings    │
+│ API        │     │ .csv (http │     │ .csv           │     │ .parquet    │
+│            │     │  urls)     │     │ (s3://… URIs)  │     │ (clean)     │
+└────────────┘     └────────────┘     └────────────────┘     └─────────────┘
+                        │                    │                    │
+                        │         ┌──────────▼────────┐           │
+                        │         │ MinIO S3 bucket   │           │
+                        │         │ realty/images/... │           │
+                        │         └───────────────────┘           │
+                        ▼                                         ▼
+                      DVC                                        DVC
+                 (sale snapshot)                          (clean snapshot)
+```
 
 ## Структура проекта
 
 ```
 .
-├── pyproject.toml          # uv-проект, зависимости
+├── pyproject.toml              # uv-проект, зависимости
 ├── uv.lock
-├── .gitignore              # игнорирует data/, .venv, кэш DVC
-├── .dvc/                   # конфигурация DVC
+├── docker-compose.yml          # MinIO + автосоздание бакетов
+├── .env.example                # пример учёток MinIO и параметров S3
+├── .gitignore
+├── .dvc/                       # конфигурация DVC
 ├── src/
 │   └── realty_scraper/
 │       ├── __init__.py
-│       └── cian.py         # клиент API + парсер + CLI
+│       ├── cian.py             # шаг 1: скрэйпер Cian API
+│       ├── s3_utils.py         # boto3-клиент для MinIO
+│       ├── images.py           # шаг 2: скачивание фото + заливка в S3
+│       ├── schema.py           # Pandera-схема датасета
+│       └── clean.py            # шаг 3: типизация + валидация + parquet
 ├── data/
-│   ├── raw/                # сырые JSONL-ответы API (под DVC)
-│   ├── processed/          # сводный CSV (под DVC)
-│   └── images/             # скачанные фото (под DVC, ДЗ №2)
-└── notebooks/              # ноутбуки для EDA
+│   ├── raw/                    # сырые JSONL-ответы API (под DVC)
+│   ├── processed/              # CSV и итоговый parquet (под DVC)
+│   └── images/                 # (не используется — фото в S3)
+└── notebooks/                  # ноутбуки для EDA
 ```
 
 ## Настройка окружения
 
-Требуются [`uv`](https://docs.astral.sh/uv/) и Git.
+Требования: [`uv`](https://docs.astral.sh/uv/), Git, Docker Desktop.
 
 ```bash
-# 1. Клонировать репозиторий
+# 1. Склонировать и установить зависимости
 git clone <repo-url> realty-scraper && cd realty-scraper
-
-# 2. Создать виртуальное окружение и установить зависимости
 uv sync
 
-# 3. Подтянуть данные из DVC-хранилища (если уже есть снэпшот)
-uv run dvc pull
+# 2. dvc-s3 ставится отдельно (конфликтует с uv resolver-ом из-за aiobotocore)
+uv pip install "dvc[s3]"
+
+# 3. Поднять MinIO (см. далее)
+cp .env.example .env
+docker compose up -d                    # запустит minio + создаст бакеты
+# MinIO Web UI: http://localhost:9001  (minioadmin / minioadmin)
+# S3 API:       http://localhost:9000
 ```
 
-## Сбор данных
+Контейнер `mc` автоматически создаст два бакета:
+- `realty` — фото объявлений;
+- `dvc-storage` — удалённое хранилище DVC.
+
+## Использование
+
+### Шаг 1. Сбор данных с cian.ru
 
 ```bash
-# ~480 объявлений о продаже квартир в Москве (по умолчанию)
-uv run python -m realty_scraper.cian --pages 20 --out data/processed/listings.csv
-
-# ~1000 объявлений
-uv run python -m realty_scraper.cian --pages 50 --out data/processed/listings.csv
-
-# Аренда квартир
-uv run python -m realty_scraper.cian --deal-type rent --pages 20 --out data/processed/rent.csv
-
-# Санкт-Петербург
-uv run python -m realty_scraper.cian --region 2 --pages 20 --out data/processed/spb.csv
-
-# Подробный лог
-uv run python -m realty_scraper.cian --pages 20 -v --out data/processed/listings.csv
+uv run python -m realty_scraper.cian \
+    --region 1 --deal-type sale --offer-type flat \
+    --pages 20 \
+    --out data/processed/listings.csv
 ```
+
+Результат — `listings.csv` (структурированные поля + `image_urls` со ссылками
+на `images.cdn-cian.ru`) и рядом `listings.jsonl` с сырыми ответами API.
 
 Аргументы CLI:
 
 | Флаг            | По умолчанию                  | Описание                                       |
 |-----------------|-------------------------------|------------------------------------------------|
-| `--region`      | `1` (Москва)                  | ID региона cian.ru (1=Москва, 2=СПб)           |
+| `--region`      | `1` (Москва)                  | ID региона Cian (2 = СПб)                      |
 | `--deal-type`   | `sale`                        | `sale` / `rent`                                |
 | `--offer-type`  | `flat`                        | `flat`, `room`, `house`                        |
 | `--pages`       | `20`                          | страниц по ~24 объявления                      |
-| `--out`         | `data/processed/listings.csv` | путь к итоговому CSV                           |
-| `--raw`         | рядом с CSV (`.jsonl`)        | сырые ответы API (для DVC и отладки)           |
-| `-v`            | —                             | подробный лог                                  |
+| `--out`         | `data/processed/listings.csv` | путь к CSV                                     |
 
-Скрипт инициализирует браузерную сессию (посещает главную страницу и страницу
-поиска для получения cookies), делает паузы между запросами и использует
-экспоненциальные ретраи через `tenacity`.
+### Шаг 2. Заливка фото в MinIO
 
-## Поля CSV
+```bash
+uv run python -m realty_scraper.images \
+    --in  data/processed/listings.csv \
+    --out data/processed/listings_s3.csv \
+    --bucket realty \
+    --workers 8 \
+    --max-per-offer 10
+```
 
-| Поле             | Описание                                      |
-|------------------|-----------------------------------------------|
-| `offer_id`       | ID объявления на cian.ru                      |
-| `url`            | Ссылка на объявление                          |
-| `deal_type`      | Тип сделки (`sale` / `rent`)                  |
-| `object_type`    | Тип объекта (`flatSale`, `newBuildingFlatSale`, …) |
-| `price`          | Цена, ₽                                       |
-| `price_per_m2`   | Цена за м², ₽                                 |
-| `area_total`     | Общая площадь, м²                             |
-| `area_living`    | Жилая площадь, м²                             |
-| `area_kitchen`   | Площадь кухни, м²                             |
-| `rooms`          | Количество комнат                             |
-| `floor`          | Этаж                                          |
-| `floors_total`   | Этажей в доме                                 |
-| `address`        | Адрес (район, улица, дом)                     |
-| `city`           | Город                                         |
-| `underground`    | Ближайшая станция метро                       |
-| `latitude`       | Широта                                        |
-| `longitude`      | Долгота                                       |
-| `year_built`     | Год постройки                                 |
-| `house_material` | Материал стен (`monolith`, `brick`, …)        |
-| `has_balcony`    | Наличие балкона                               |
-| `description`    | Текстовое описание от автора                  |
-| `image_urls`     | URL фотографий через `;`                      |
+Что делает:
+1. Подключается к MinIO по `S3_ENDPOINT_URL` (по умолчанию `http://localhost:9000`);
+2. Создаёт бакет `realty`, если его ещё нет;
+3. Для каждого объявления скачивает до `--max-per-offer` фото и заливает
+   в `s3://realty/images/<offer_id>/000.jpg`, `…/001.jpg`, …;
+4. Записывает новый CSV, где колонка `image_urls` заменена на `image_uris`
+   (`s3://realty/images/…` через `;`);
+5. С флагом `--skip-existing` не перезакачивает уже залитые ключи.
+
+Конфиденциальные параметры читаются из окружения (см. `.env.example`):
+`S3_ENDPOINT_URL`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION`, `S3_BUCKET`.
+
+### Шаг 3. Валидация и сохранение parquet
+
+```bash
+uv run python -m realty_scraper.clean \
+    --in  data/processed/listings_s3.csv \
+    --out data/processed/listings.parquet
+```
+
+Скрипт:
+1. Читает CSV, приводит колонки к нужным типам (`float64`, nullable `Int64`,
+   nullable `boolean`, `string`);
+2. Прогоняет DataFrame через `LISTING_SCHEMA` (см. [schema.py](src/realty_scraper/schema.py));
+3. Отсеивает строки, нарушившие хотя бы одну проверку; по колонкам
+   выводит сводку, а все кейсы сохраняет в `listings_failures.csv`;
+4. Сохраняет чистый датасет в `.parquet` (`pyarrow`, сжатие `snappy`).
+
+## Pandera-схема
+
+Жёсткие инварианты для строк (см. `LISTING_SCHEMA`):
+
+| Поле             | Ограничение                                              |
+|------------------|----------------------------------------------------------|
+| `offer_id`       | только цифры, уникальный                                 |
+| `url`            | начинается с `http`                                      |
+| `deal_type`      | `sale` либо `rent`                                       |
+| `price`          | 100 000 ≤ price ≤ 3 000 000 000 ₽                        |
+| `price_per_m2`   | 1 000 ≤ price/m² ≤ 10 000 000 ₽ (опционально)            |
+| `area_total`     | 8 ≤ area ≤ 1 000 м²                                      |
+| `area_living`    | 1 ≤ area ≤ 500 м², ≤ `area_total`                        |
+| `area_kitchen`   | 1 ≤ area ≤ 500 м², ≤ `area_total`                        |
+| `rooms`          | 0 (студия) … 20                                          |
+| `floor`          | 1 … 100                                                  |
+| `floors_total`   | 1 … 100                                                  |
+| `floor`/`floors` | `floor ≤ floors_total`                                   |
+| `latitude`       | 41.0 … 82.0 (граница РФ)                                 |
+| `longitude`      | 19.0 … 180.0                                             |
+| `year_built`     | 1700 … 2035                                              |
+| `image_uris`     | пусто или только `s3://…` через `;`                      |
+
+Запустить полный пайплайн одной командой:
+
+```bash
+make pipeline     # если есть Makefile; иначе — три uv run подряд
+```
 
 ## DVC
 
-Тяжёлые артефакты (CSV, JSONL, фото) исключены из Git через `.gitignore`
-и хранятся под DVC. После сбора данных:
+### Настройка S3-remote в MinIO
 
 ```bash
-uv run dvc add data/processed/listings.csv data/processed/listings.jsonl
-uv run dvc push
-git add data/processed/listings.csv.dvc data/processed/listings.jsonl.dvc
-git commit -m "data: snapshot listings"
+# Удалим/переопределим старый локальный remote, если есть
+uv run dvc remote remove localremote 2>/dev/null || true
+
+uv run dvc remote add -d s3remote s3://dvc-storage
+uv run dvc remote modify s3remote endpointurl http://localhost:9000
+# Креды — только локально, в Git не коммитятся (.dvc/config.local)
+uv run dvc remote modify --local s3remote access_key_id     minioadmin
+uv run dvc remote modify --local s3remote secret_access_key minioadmin
 ```
 
-Текущее удалённое хранилище — локальная папка `~/dvc-storage-realty`.
+### Снэпшот данных
 
+```bash
+uv run dvc add data/processed/listings.csv \
+              data/processed/listings_s3.csv \
+              data/processed/listings.parquet \
+              data/processed/listings.jsonl
+
+uv run dvc push              # заливка в s3://dvc-storage/...
+
+git add data/processed/*.dvc .gitignore
+git commit -m "data: clean parquet snapshot"
+```
+
+Чтобы подтянуть данные на другой машине:
+
+```bash
+docker compose up -d          # поднять MinIO
+uv run dvc pull               # скачает все артефакты из dvc-storage
+```
+
+## Что дальше
+
+- CI: прогон `clean` в GitHub Actions + публикация отчёта pandera;
+- Расширение признаков (ремонт, тип санузла, парковка, расстояние до метро);
+- Миграция S3-remote с локального MinIO на Yandex Object Storage.
