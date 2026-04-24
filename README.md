@@ -152,7 +152,7 @@ uv run python -m realty_scraper.clean \
 
 ## Pandera-схема
 
-Жёсткие инварианты для строк (см. `LISTING_SCHEMA`):
+Жёсткие ограничения для строк (см. `LISTING_SCHEMA`):
 
 | Поле             | Ограничение                                              |
 |------------------|----------------------------------------------------------|
@@ -160,17 +160,13 @@ uv run python -m realty_scraper.clean \
 | `url`            | начинается с `http`                                      |
 | `deal_type`      | `sale` либо `rent`                                       |
 | `price`          | 100 000 ≤ price ≤ 3 000 000 000 ₽                        |
-| `price_per_m2`   | 1 000 ≤ price/m² ≤ 10 000 000 ₽ (опционально)            |
 | `area_total`     | 8 ≤ area ≤ 1 000 м²                                      |
-| `area_living`    | 1 ≤ area ≤ 500 м², ≤ `area_total`                        |
-| `area_kitchen`   | 1 ≤ area ≤ 500 м², ≤ `area_total`                        |
 | `rooms`          | 0 (студия) … 20                                          |
 | `floor`          | 1 … 100                                                  |
 | `floors_total`   | 1 … 100                                                  |
 | `floor`/`floors` | `floor ≤ floors_total`                                   |
 | `latitude`       | 41.0 … 82.0 (граница РФ)                                 |
 | `longitude`      | 19.0 … 180.0                                             |
-| `year_built`     | 1700 … 2035                                              |
 | `image_uris`     | пусто или только `s3://…` через `;`                      |
 
 Запустить полный пайплайн одной командой:
@@ -215,8 +211,3 @@ docker compose up -d          # поднять MinIO
 uv run dvc pull               # скачает все артефакты из dvc-storage
 ```
 
-## Что дальше
-
-- CI: прогон `clean` в GitHub Actions + публикация отчёта pandera;
-- Расширение признаков (ремонт, тип санузла, парковка, расстояние до метро);
-- Миграция S3-remote с локального MinIO на Yandex Object Storage.
