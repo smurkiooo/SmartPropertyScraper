@@ -1,0 +1,16 @@
+creation_timestamp: 1777136822732
+current_stage: None
+deployment_job_state: null
+description: null
+last_updated_timestamp: 1777136822732
+model_id: m-6526d1a98dc948b098c0309cbdc2bfd8
+name: realty-price-catboost
+run_id: 7c6f9bd88de941bcba8d088e292d7977
+run_link: null
+source: models:/m-6526d1a98dc948b098c0309cbdc2bfd8
+status: READY
+status_message: null
+storage_location: /Users/roman/scraper/mlruns/828763867670088292/models/m-6526d1a98dc948b098c0309cbdc2bfd8/artifacts
+user_id: null
+version: 1
+workspace: default
