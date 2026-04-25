@@ -18,6 +18,13 @@ dependencies = [
     "scikit-learn>=1.5",
     "tenacity>=9.1.4",
     "tqdm>=4.67.3",
+    "chromadb>=0.5",
+    "sentence-transformers>=3.0",
+    "torch>=2.0",
+    "einops>=0.8",
+    "openai>=1.0",
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
 ]
 
 [dependency-groups]
