@@ -58,3 +58,5 @@ __pycache__/
 data/backups/
 data/chroma/
 uv.lock
+mlruns/
+mlruns/

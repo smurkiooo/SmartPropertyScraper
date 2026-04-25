@@ -103,6 +103,6 @@ class LMStudioClient:
             if delta:
                 print(delta, end="", flush=True)
                 collected.append(delta)
-        print()  # перенос строки после стрима
+        print()  
 
         return "".join(collected)
