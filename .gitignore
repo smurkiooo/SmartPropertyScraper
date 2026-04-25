@@ -55,3 +55,6 @@ __pycache__/
 /.dvc/cache
 /.dvc/tmp
 /.dvc/plots
+data/backups/
+data/chroma/
+uv.lock
