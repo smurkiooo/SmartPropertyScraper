@@ -20,6 +20,27 @@ wheels/
 # Jupyter
 .ipynb_checkpoints/
 
+# Если ChromaDB там случайно
+data/chroma/
+data/backups/
+
+# Кэш HuggingFace
+.cache/
+
+# Модели
+models/
+
+# DVC
+.dvc/
+*.dvc
+
+# MLflow
+mlflow/
+
+# Logs
+*.log
+__pycache__/
+
 # DVC — данные/изображения отслеживаются через DVC, не Git
 /data/raw/
 /data/processed/
