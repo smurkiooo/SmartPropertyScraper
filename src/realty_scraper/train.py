@@ -23,13 +23,17 @@ from catboost import CatBoostRegressor, Pool
 from mlflow.models import infer_signature
 from optuna.samplers import TPESampler
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.decomposition import PCA
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.model_selection import train_test_split
 
 DATA_PATH = pathlib.Path("data/processed/listings.parquet")
+DATA_PATH_CLIP = pathlib.Path("data/processed/listings_clip.parquet")
 MODEL_PATH = pathlib.Path("models/catboost_model")
 TARGET_COL = "target"
 EXPERIMENT_NAME = "realty-price-prediction"
+CLIP_DIM = 512
+CLIP_PCA_COMPONENTS = 64  # 512 → 64 (объясняет ~90% дисперсии)
 
 CAT_FEATURES = ["object_type", "underground", "district"]
 
@@ -52,6 +56,10 @@ _KREMLIN_LON = 37.617
 
 def load_data(path: pathlib.Path) -> pd.DataFrame:
     return pd.read_parquet(path).rename(columns={"price": TARGET_COL})
+
+
+def clip_columns(df: pd.DataFrame) -> list[str]:
+    return [c for c in df.columns if c.startswith("clip_")]
 
 
 class FeatureEngineer(BaseEstimator, TransformerMixin):
@@ -183,11 +191,13 @@ def print_metrics(metrics: dict[str, float], label: str):
 # главный пайплайн обучения, подбора гиперпараметров и логирования модели в mlflow
 
 
-def train(data_path: pathlib.Path = DATA_PATH,model_path: pathlib.Path = MODEL_PATH,log_target: bool = True,
-    test_size: float = 0.2,n_trials: int = 50) -> CatBoostRegressor:
-    
+def train(data_path: pathlib.Path = DATA_PATH, model_path: pathlib.Path = MODEL_PATH, log_target: bool = True, test_size: float = 0.2, n_trials: int = 50,) -> CatBoostRegressor:
+
     df = load_data(data_path)
-    print(f"Датасет: {df.shape[0]} строк × {df.shape[1]} cтолбцов")
+    clip_cols = clip_columns(df)
+    use_clip = len(clip_cols) > 0
+    print(f"Датасет: {df.shape[0]} строк × {df.shape[1]} столбцов"
+          + (f"  (включая {len(clip_cols)} CLIP-признаков)" if use_clip else ""))
 
     y = df[TARGET_COL].copy()
     X = df.drop(columns=[TARGET_COL])
@@ -196,12 +206,26 @@ def train(data_path: pathlib.Path = DATA_PATH,model_path: pathlib.Path = MODEL_P
         y = np.log1p(y)
 
     X = FeatureEngineer().fit_transform(X)
-   
+
+    if use_clip:
+        clip_present = [c for c in X.columns if c.startswith("clip_")]
+        pca = PCA(n_components=CLIP_PCA_COMPONENTS, random_state=42)
+        clip_reduced = pca.fit_transform(X[clip_present])
+        explained = pca.explained_variance_ratio_.sum()
+        print(f"PCA: {len(clip_present)} → {CLIP_PCA_COMPONENTS} CLIP-признаков "
+              f"(объяснённая дисперсия: {explained:.2%})")
+        X = X.drop(columns=clip_present)
+        pca_df = pd.DataFrame(
+            clip_reduced,
+            columns=[f"clip_pca_{i}" for i in range(CLIP_PCA_COMPONENTS)],
+            index=X.index,
+        )
+        X = pd.concat([X, pca_df], axis=1)
 
     X_train, X_val, y_train, y_val = train_test_split(
         X, y, test_size=test_size, random_state=42
     )
-    print(f"Трейн: {len(X_train)}  |  Валидация: {len(X_val)}")
+    print(f"Трейн: {len(X_train)}  |  Валидация: {len(X_val)}  |  Признаков: {X.shape[1]}")
 
     train_pool = Pool(X_train, y_train, cat_features=CAT_FEATURES)
     val_pool = Pool(X_val, y_val, cat_features=CAT_FEATURES)
@@ -245,13 +269,16 @@ def train(data_path: pathlib.Path = DATA_PATH,model_path: pathlib.Path = MODEL_P
 
     with mlflow.start_run():
         mlflow.log_params({
-          
             "log_target": log_target,
             "test_size": test_size,
             "train_size": len(X_train),
             "val_size": len(X_val),
             "n_trials": n_trials,
             "iterations": model.get_param("iterations"),
+            "use_clip_features": use_clip,
+            "clip_pca_components": CLIP_PCA_COMPONENTS if use_clip else 0,
+            "clip_explained_variance": round(pca.explained_variance_ratio_.sum(), 4) if use_clip else 0,
+            "total_features": len(X_train.columns),
             **best_params,
         })
 
@@ -271,33 +298,50 @@ def train(data_path: pathlib.Path = DATA_PATH,model_path: pathlib.Path = MODEL_P
         signature = infer_signature(X_val, preds_val)
         input_example = X_val.head(5)
 
+        model_name = "realty-price-catboost-clip_PCA" if use_clip else "realty-price-catboost"
+
         mlflow.catboost.log_model(
             cb_model=model,
-            artifact_path="catboost_model",
+            name="catboost_model",           
             signature=signature,
             input_example=input_example,
-            registered_model_name="realty-price-catboost" if tracking_uri.startswith("http") else None,
+            registered_model_name=model_name,
         )
 
         run_id = mlflow.active_run().info.run_id
-        print(f"MLflow run: {run_id}")
-        print(f"Tracking URI: {tracking_uri}")
+        artifact_uri = mlflow.get_artifact_uri("catboost_model")
+        print(f"MLflow run:      {run_id}")
+        print(f"Tracking URI:    {tracking_uri}")
+        print(f"Артефакт модели: {artifact_uri}")
 
     model_path.parent.mkdir(parents=True, exist_ok=True)
     model.save_model(str(model_path))
-    print(f"модель сохранена: {model_path}")
 
     return model
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Обучение CatBoostRegressor на listings.parquet")
-    p.add_argument("--data", type=pathlib.Path, default=DATA_PATH)
+    p.add_argument("--data", type=pathlib.Path, default=None)
+    p.add_argument("--clip", action="store_true")
+    p.add_argument("--no-clip", dest="clip", action="store_false")
     p.add_argument("--model-out", type=pathlib.Path, default=MODEL_PATH)
-    p.add_argument("--n-trials", type=int, default=50, help="Количество trials Optuna")
+    p.add_argument("--n-trials", type=int, default=50)
+    p.add_argument("--test-size", type=float, default=0.2)
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    train(data_path=args.data, model_path=args.model_out, n_trials=args.n_trials)
+
+    if args.data is not None:
+        data_path = args.data
+    elif args.clip:
+        data_path = DATA_PATH_CLIP
+    elif DATA_PATH_CLIP.exists():
+        print(f"Найден {DATA_PATH_CLIP}, используем CLIP-датасет (--no-clip чтобы отключить)")
+        data_path = DATA_PATH_CLIP
+    else:
+        data_path = DATA_PATH
+
+    train(data_path=data_path, model_path=args.model_out, n_trials=args.n_trials)
