@@ -1,0 +1,10 @@
+artifact_location: /Users/roman/scraper/mlruns/828763867670088292/models/m-6526d1a98dc948b098c0309cbdc2bfd8/artifacts
+creation_timestamp: 1777136821666
+experiment_id: '828763867670088292'
+last_updated_timestamp: 1777136822718
+model_id: m-6526d1a98dc948b098c0309cbdc2bfd8
+model_type: null
+name: catboost_model
+source_run_id: 7c6f9bd88de941bcba8d088e292d7977
+status: 2
+status_message: null
