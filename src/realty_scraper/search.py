@@ -1,12 +1,9 @@
 """
-Semantic search over indexed listings.
+Семантический поиск по уже проиндексированным объявлениям
 
-Programmatic usage:
-    from realty_scraper.search import ApartmentSearch
-    search = ApartmentSearch()
-    results = search.query("двушка рядом с метро с ремонтом", n_results=5)
 
-CLI usage:
+
+CLI использование:
     uv run python -m realty_scraper.search "запрос" [--top N] [--deal-type sale|rent]
 """
 
@@ -22,7 +19,7 @@ from sentence_transformers import SentenceTransformer
 from realty_scraper.text_utils import clean_description
 
 COLLECTION_NAME = "listings"
-MODEL_NAME = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+MODEL_NAME = "intfloat/multilingual-e5-large"
 
 
 @dataclass
@@ -72,7 +69,6 @@ class ApartmentSearch:
     def _get_model(self) -> SentenceTransformer:
         if self._model is None:
             self._model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
-            self._model.max_seq_length = 4096
         return self._model
 
     def _get_collection(self) -> Any:
@@ -81,16 +77,11 @@ class ApartmentSearch:
             self._collection = client.get_collection(COLLECTION_NAME)
         return self._collection
 
-    def query(
-        self,
-        text: str,
-        n_results: int = 5,
-        filters: dict | None = None,
-    ) -> list[SearchResult]:
+    def query(self, text: str, n_results: int = 5, filters: dict | None = None) -> list[SearchResult]:
         cleaned = clean_description(text)
         model = self._get_model()
 
-        embedding = model.encode(cleaned).tolist()
+        embedding = model.encode("query: " + cleaned).tolist()
 
         collection = self._get_collection()
         results = collection.query(
@@ -106,7 +97,7 @@ class ApartmentSearch:
             results["metadatas"][0],
             results["distances"][0],
         ):
-            # ChromaDB cosine distance: 0 = identical, 2 = opposite → convert to similarity
+            # ChromaDB возвращает расстояние в диапазоне от 0 до 2, поэтому я перевожу его в меру похожести [0,1]
             score = 1.0 - dist / 2.0
             output.append(
                 SearchResult(

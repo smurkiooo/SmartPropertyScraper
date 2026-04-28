@@ -29,12 +29,13 @@ def run(backup_path: Path, chroma_host: str, chroma_port: int) -> None:
     all_data = {"listings": []}
 
     for start in range(0, total, batch_size):
-        data = collection.get(offset=start, limit=batch_size, include=["documents", "metadatas"])
-        for id_, doc, meta in zip(data["ids"], data["documents"], data["metadatas"]):
+        data = collection.get(offset=start, limit=batch_size, include=["documents", "metadatas", "embeddings"])
+        for id_, doc, meta, emb in zip(data["ids"], data["documents"], data["metadatas"], data["embeddings"]):
             all_data["listings"].append({
                 "id": id_,
                 "description": doc,
                 "metadata": meta,
+                "embedding": emb.tolist() if hasattr(emb, 'tolist') else emb,
             })
         print(f"  {min(start + batch_size, total)}/{total}")
 
@@ -68,6 +69,7 @@ def restore(backup_path: Path, chroma_host: str, chroma_port: int) -> None:
             ids=[item["id"] for item in batch],
             documents=[item["description"] for item in batch],
             metadatas=[item["metadata"] for item in batch],
+            embeddings=[item["embedding"] for item in batch],
         )
         print(f"  {min(i + batch_size, len(listings))}/{len(listings)}")
 

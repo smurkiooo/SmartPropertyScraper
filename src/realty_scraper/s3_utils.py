@@ -16,13 +16,7 @@ DEFAULT_REGION = os.environ.get("S3_REGION", "us-east-1")
 DEFAULT_BUCKET = os.environ.get("S3_BUCKET", "realty")
 
 
-def get_s3_client(
-    *,
-    endpoint_url: str = DEFAULT_ENDPOINT,
-    access_key: str = DEFAULT_ACCESS_KEY,
-    secret_key: str = DEFAULT_SECRET_KEY,
-    region: str = DEFAULT_REGION,
-) -> Any:
+def get_s3_client(*,endpoint_url: str = DEFAULT_ENDPOINT,access_key: str = DEFAULT_ACCESS_KEY,secret_key: str = DEFAULT_SECRET_KEY,region: str = DEFAULT_REGION,) -> Any:
     """Создаёт boto3-клиент, настроенный на MinIO/S3."""
     return boto3.client(
         "s3",

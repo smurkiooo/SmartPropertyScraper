@@ -1,10 +1,6 @@
 """
 Сборщик объявлений о недвижимости с cian.ru.
 
-Используется публичный JSON POST-эндпоинт поиска api.cian.ru, который
-вызывает фронтенд сайта при обычном поиске. Возвращает структурированные
-поля, текстовое описание автора и ссылки на фотографии.
-
 Пример запуска:
     uv run python -m realty_scraper.cian \
         --region 1 --deal-type sale \
@@ -81,7 +77,6 @@ logger = logging.getLogger("realty_scraper.cian")
 
 @dataclass
 class Listing:
-    """Плоское представление одного объявления для CSV."""
 
     offer_id: str
     url: str

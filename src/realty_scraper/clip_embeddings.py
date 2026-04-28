@@ -63,7 +63,6 @@ def _download_image(s3_client, bucket: str, uri: str) -> Image.Image | None:
 
 
 def load_clip(device: str) -> tuple[CLIPModel, CLIPProcessor]:
-    logger.info("Загружаем CLIP (%s) на %s...", CLIP_MODEL_NAME, device)
     processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
     model = CLIPModel.from_pretrained(CLIP_MODEL_NAME).to(device)
     model.eval()
@@ -77,7 +76,7 @@ def _encode_batch(images: list[Image.Image], model: CLIPModel, processor: CLIPPr
         batch = images[start : start + batch_size]
         inputs = processor(images=batch, return_tensors="pt").to(device)
         vision_outputs = model.vision_model(**inputs)
-        image_feats = model.visual_projection(vision_outputs[1])  # pooler_output
+        image_feats = model.visual_projection(vision_outputs[1])  
         image_feats = image_feats / image_feats.norm(dim=-1, keepdim=True)
         parts.append(image_feats.cpu().float().numpy())
     return np.vstack(parts)

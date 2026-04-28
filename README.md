@@ -61,7 +61,7 @@ listings.csv ──▶ MinIO/S3 (фото) ──▶ listings_s3.csv
     ▼                                       ▼
 listings.parquet                    [RAG индексация]
     │                               text_utils.py → clean_description()
-    ▼                               index.py → sentence-transformers → ChromaDB
+    ▼                               index.py → multilingual-e5-large → ChromaDB
 CatBoost + Optuna                           │
     │                                       ▼
 MLflow                              search.py → семантический поиск
@@ -316,33 +316,38 @@ uv run python -m realty_scraper.bot
 Семантический поиск по текстовым описаниям объявлений с генерацией ответа через локальную LLM.
 
 **Компоненты:**
-- **Эмбеддинги:** `sentence-transformers/paraphrase-multilingual-mpnet-base-v2`
+- **Эмбеддинги:** `intfloat/multilingual-e5-large` (1024D, асимметричный поиск: документы кодируются с префиксом `"passage: "`, запросы — `"query: "`)
 - **Векторная БД:** ChromaDB (Docker, порт 8000), данные в `./data/chroma/`
 - **LLM:** LM Studio с любой локальной моделью (OpenAI-совместимый API на `localhost:1234`)
 
 **Запуск:**
 
 ```bash
-# 1. Индексация (однократно, ~40 мин на CPU)
+# 1. Индексация (однократно, ~10-15 мин на M1; при первом запуске скачает модель ~1.1 GB)
 uv run python -m realty_scraper.index
 
-# 2. Веб-интерфейс → http://localhost:7860
+# 2. Сохранить бэкап (содержит эмбеддинги — восстановление не требует переиндексации)
+uv run python -m realty_scraper.backup
+
+# 3. Веб-интерфейс → http://localhost:7860
 uv run python -m realty_scraper.web
 
-# 3. CLI без LLM
+# 4. CLI без LLM
 uv run python -m realty_scraper.search "двушка рядом с метро" --top 5
 
-# 4. CLI с LLM (LM Studio должен быть запущен)
+# 5. CLI с LLM (LM Studio должен быть запущен)
 uv run python -m realty_scraper.rag "пентхаус с видом" --top 3
 
-# 5. Backup индекса
-uv run python -m realty_scraper.backup
+# 6. Восстановить бэкап после перезапуска Docker (без переиндексации)
+uv run python -m realty_scraper.backup --restore
 ```
 
 **Важные детали:**
 - `text_utils.py` выполняет лёгкую предобработку: удаление HTML, эмодзи, нормализацию unicode. Стоп-слова и приведение к нижнему регистру **не применяются** — это ухудшает качество трансформерных эмбеддингов.
+- `multilingual-e5-large` требует асимметричные префиксы: `"passage: "` при индексации и `"query: "` при поиске — без них качество заметно падает.
 - Метаданные в ChromaDB не принимают `None` — пропущенные числовые поля заменяются на `0`.
 - `index.py` идемпотентен: повторный запуск пропускает уже проиндексированные `offer_id`.
+- `backup.py` сохраняет эмбеддинги вместе с документами; восстановление через `--restore` не требует переиндексации и не зависит от наличия модели.
 - В LLM передаётся не более 3 объявлений (ограничение контекста 3B-модели).
 
 ---

@@ -1,7 +1,7 @@
 """
-Index listings_s3.csv into ChromaDB.
+индексация описаний объявлений из CSV файла в локально развернутую ChromaDB.
 
-Usage:
+СLI использование:
     uv run python -m realty_scraper.index [--csv PATH] [--batch-size N] [--chroma-host HOST]
 """
 
@@ -19,14 +19,13 @@ from realty_scraper.text_utils import clean_description
 
 COLLECTION_NAME = "listings"
 DEFAULT_CSV = Path("data/processed/listings_s3.csv")
-MODEL_NAME = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+MODEL_NAME = "intfloat/multilingual-e5-large"
 DEFAULT_BATCH = 32
 
 
 def _load_model() -> SentenceTransformer:
     print(f"Loading model {MODEL_NAME}...")
     model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
-    model.max_seq_length = 4096
     return model
 
 
@@ -35,7 +34,7 @@ def _load_data(csv_path: Path) -> pd.DataFrame:
     required = {"offer_id", "url", "description"}
     missing = required - set(df.columns)
     if missing:
-        raise ValueError(f"CSV missing columns: {missing}")
+        raise ValueError(f"в CSV пропущены колонки: {missing}")
 
     df["description"] = df["description"].fillna("").apply(clean_description)
     df = df[df["description"].str.len() > 0].reset_index(drop=True)
@@ -79,17 +78,17 @@ def run(csv_path: Path, batch_size: int, chroma_host: str, chroma_port: int) -> 
     df = df[~df["offer_id"].astype(str).isin(existing)].reset_index(drop=True)
 
     if df.empty:
-        print("All listings already indexed. Nothing to do.")
+        print("все проиндексировано")
         return
 
-    print(f"Indexing {len(df)} new listings in batches of {batch_size}...")
+
 
     for start in tqdm(range(0, len(df), batch_size)):
         batch = df.iloc[start : start + batch_size]
 
         texts = batch["description"].tolist()
-        # Documents are encoded without instruction prefix (asymmetric search)
-        embeddings = model.encode(texts, show_progress_bar=False).tolist()
+        passages = ["passage: " + t for t in texts]
+        embeddings = model.encode(passages, show_progress_bar=False).tolist()
 
         collection.add(
             ids=batch["offer_id"].astype(str).tolist(),
@@ -102,7 +101,7 @@ def run(csv_path: Path, batch_size: int, chroma_host: str, chroma_port: int) -> 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Index listings into ChromaDB")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--csv", type=Path, default=DEFAULT_CSV)
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH)
     parser.add_argument("--chroma-host", default="localhost")
